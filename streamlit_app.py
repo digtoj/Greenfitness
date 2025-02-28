@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 from fitness_center_data import get_fitness_data_by_country_code
-from streamlit_option_menu import option_menu
 
 from openmapapi import get_charging_stations
 from result_view import get_card_view_fitness, show_container_veiw
