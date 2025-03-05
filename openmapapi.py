@@ -13,13 +13,12 @@ if api_key is None:
     raise ValueError("⚠️ API key is missing! Please check your .env file.")
 
 # API Open Charge Map
-def get_charging_stations(latitude, longitude, max_results=100, radius_km=10, country_code='DE'):
+def get_charging_stations(latitude, longitude, max_results=100, radius_km=10):
 
     if api_key is None:
         raise ValueError("The API key is not available.")
 
     params = {
-        "countrycode": country_code,
         "maxresults": max_results,
         "compact": "true",
         "verbose": "false",

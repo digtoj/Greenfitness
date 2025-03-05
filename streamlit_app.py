@@ -27,7 +27,7 @@ DEFAULT_COORDINATES = {
     "FR": (46.6034, 1.8883)    # France center
 }
 DEFAULT_ZOOM = 5
-DEFAULT_SEARCH_RADIUS_KM = 5
+DEFAULT_SEARCH_RADIUS_KM = 10
 
 all_fitness_centers = get_all_fitness_centers()
 
@@ -168,7 +168,7 @@ def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
     try:
         # Update session state
         st.session_state.selected_fitness = fitness
-        st.session_state.zoom_start = 13
+        st.session_state.zoom_start = 3
         
         # Ensure latitude/longitude are present and valid
         if "latitude" in fitness and "longitude" in fitness:
@@ -181,8 +181,7 @@ def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
             st.session_state.charging_stations = get_charging_stations(
                 fitness["latitude"],
                 fitness["longitude"],
-                radius_km,
-                country_code=country_code,
+                radius_km
             )
             
             # Force a rerun to update the UI
@@ -310,23 +309,18 @@ def main():
     
     # Country selection
     country_code = st.sidebar.radio(
-        "Land der Suche für die Lade-stations:",
+        "Land der Suche auswählen:",
         ["DE", "FR"],
         captions=["Deutschland", "Frankreich"],
         index=0 if st.session_state.selected_country_code == "DE" else 1,
     )
     st.session_state.selected_country_code = country_code
-
-    show_charging_station = st.sidebar.button(label="💡Lade Station anzeigen")
-   
-    if show_charging_station:
-        st.text("Show lade station")
     
     # Search radius slider
     search_radius_km = st.sidebar.slider(
-        "🔄 Adjust Proximity Radius (km):", 
+        "🔄 Entfernung (km):", 
         min_value=1, 
-        max_value=20, 
+        max_value=50, 
         value=st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM)
     )
     st.session_state.search_radius_km = search_radius_km
@@ -335,16 +329,20 @@ def main():
     if st.session_state.fitness_centers.empty:
         st.error("The are no saved data for the fitness Studio.")
     else:
-        st.sidebar.header("🏋️‍♂️ Fitnessstudiokette")
+        st.sidebar.header("🏋️‍♂️Ausgwähle Fitnessstudiokette")
         
         # Function to select all studios
         def select_all_studios():
             for studio in st.session_state.studios_name:
                 st.session_state.studio_filters[studio] = True
+                # Update the individual checkbox state variables
+                st.session_state[f"studio_{studio}"] = True
+            # Force a rerun to update the UI
+            st.rerun()
         
         # Add "Select All" button at the top of the container
         if st.session_state.studios_name:
-            select_all = st.sidebar.button("Select All Studios", on_click=select_all_studios)
+            select_all = st.sidebar.button("Alle Fitnessstuidioskette auswählen", on_click=select_all_studios)
         
         with st.sidebar.container(border=True, height=500):
             if st.session_state.studios_name:
@@ -432,7 +430,38 @@ def main():
     
     # Display content in columns
     with col3:
-        st.header("Die Karte")
+        # Create a header and legend on the same line
+        col3_1, col3_2 = st.columns([1, 3])
+        with col3_1:
+            st.header("Die Karte")
+        with col3_2:
+            # Add a legend to explain the map markers (inline style)
+            legend_html = """
+            <div style="background-color: white; padding: 5px; border-radius: 5px; margin-top: 10px;">
+                <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 15px;">
+                    <div style="display: flex; align-items: center;">
+                        <div style="background-color: green; color: white; border-radius: 50%; width: 20px; height: 20px; text-align: center; margin-right: 5px; display: flex; justify-content: center; align-items: center;">
+                            <i class="fa fa-dumbbell"></i>
+                        </div>
+                        <span>Fitnessstudio</span>
+                    </div>
+                    <div style="display: flex; align-items: center;">
+                        <div style="background-color: red; color: white; border-radius: 50%; width: 20px; height: 20px; text-align: center; margin-right: 5px; display: flex; justify-content: center; align-items: center;">
+                            <i class="fa fa-star"></i>
+                        </div>
+                        <span>Ausgewähltes Fitnessstudio</span>
+                    </div>
+                    <div style="display: flex; align-items: center;">
+                        <div style="background-color: blue; color: white; border-radius: 50%; width: 20px; height: 20px; text-align: center; margin-right: 5px; display: flex; justify-content: center; align-items: center;">
+                            <i class="fa fa-plug"></i>
+                        </div>
+                        <span>Ladestation</span>
+                    </div>
+                </div>
+            </div>
+            """
+            st.markdown(legend_html, unsafe_allow_html=True)
+        
         st_folium(m, width=None, height=600, use_container_width=True)
     
     if not st.session_state.fitness_centers.empty:
