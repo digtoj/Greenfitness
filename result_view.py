@@ -55,8 +55,8 @@ def get_show_details_fitness(fitness_data):
     details = [
         f"📍 {address}",
         f"⏰ {clean_data(fitness_data.get('opening_hours', ''), 'Keine Angabe')}",
-        f"📞 {clean_data(fitness_data.get('contact:phone', ''))}",
-        f"🌍 {clean_data(fitness_data.get('website', ''))}",
+        f"📞 {clean_data(fitness_data.get('contact:phone', ''), 'Keine Angabe')}",
+        f"🌍 {clean_data(fitness_data.get('website', ''), 'Keine Angabe')}",
     ]
 
     show_details_of_fitness(title, "\n".join(details))
@@ -76,8 +76,8 @@ def get_card_view_fitness(fitness_data, action_handler):
     details = [
         f"📍 {address}",
         f"⏰ {clean_data(fitness_data.get('opening_hours', ''), 'Keine Angabe')}",
-        f"📞 {clean_data(fitness_data.get('contact:phone', ''))}",
-        f"🌍 {clean_data(fitness_data.get('website', ''))}",
+        f"📞 {clean_data(fitness_data.get('contact:phone', ''), 'Keine Angabe')}",
+        f"🌍 {clean_data(fitness_data.get('website', ''), 'Keine Angabe')}",
     ]
 
     show_container_veiw(

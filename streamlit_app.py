@@ -1,5 +1,6 @@
 import streamlit as st
 import folium
+from folium.plugins import HeatMap
 import pandas as pd
 from dotenv import load_dotenv
 from streamlit_folium import st_folium
@@ -9,7 +10,8 @@ import logging
 from functools import lru_cache
 
 from fitness_center_data import *
-from openmapapi import get_charging_stations
+from openmapapi import get_charging_stations, get_town_boundary
+from openroute import *
 from result_view import get_card_view_fitness, get_show_details_fitness
 from data import LOGO
 
@@ -89,7 +91,7 @@ def geocode_location(location: str) -> Optional[Tuple[float, float]]:
 # Map handling functions
 def create_base_map(center: Tuple[float, float], zoom: int) -> folium.Map:
     """
-    Create a base Folium map.
+    Create a base Folium map with an optional heatmap overlay.
     
     Args:
         center: (latitude, longitude) tuple for map center
@@ -98,7 +100,21 @@ def create_base_map(center: Tuple[float, float], zoom: int) -> folium.Map:
     Returns:
         Folium Map object
     """
-    return folium.Map(location=center, zoom_start=zoom)
+    m = folium.Map(location=center, zoom_start=zoom)
+
+    # Prepare heatmap data
+    heat_data = []
+    if not st.session_state.fitness_centers.empty:
+        for _, row in st.session_state.fitness_centers.iterrows():
+            if "latitude" in row and "longitude" in row:
+                heat_data.append([row["latitude"], row["longitude"], 1])  # 1 is the intensity
+
+    # Add HeatMap layer
+    if heat_data:
+        HeatMap(heat_data, radius=15).add_to(m)
+
+    return m
+
 
 
 def add_fitness_markers(m: folium.Map, fitness_centers: List[Dict[str, Any]]) -> None:
@@ -170,7 +186,10 @@ def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
             )
             
             # Force a rerun to update the UI
-            st.experimental_rerun()
+            # st.experimental_rerun() is outdated
+            # st.rerun() is up to date, but should not be in callback
+            # Set a flag for UI update
+            st.session_state.refresh_ui = True  # Instead of using st.rerun()
     except Exception as e:
         logger.error(f"Error in fitness selection handler: {str(e)}")
         st.error("Es ist ein Fehler bei der Auswahl des Studios aufgetreten.")
@@ -208,6 +227,9 @@ def handle_search(location: str, country_code: str, fitness_centers) -> None:
         if not coords:
             st.error(f"Konnte den Ort '{location}' nicht finden.")
             return
+        
+        # ✅ Fetch and store the town boundary
+        st.session_state.town_boundary = get_town_boundary(location, country_code)
             
         # Update map center
         st.session_state.map_center = coords
@@ -360,6 +382,19 @@ def main():
     # Create map
     m = create_base_map(st.session_state.map_center, st.session_state.zoom_start)
     
+    # Add town boundary if available
+    if st.session_state.get("town_boundary"):
+        folium.GeoJson(
+            st.session_state.town_boundary,
+            name="Selected Town",
+            style_function=lambda feature: {
+                "fillColor": "blue",
+                "color": "blue",
+                "weight": 2,
+                "fillOpacity": 0.2,
+            },
+        ).add_to(m)
+    
     # Add filtered fitness markers to the map
     if st.session_state.studios_name and st.session_state.location:
         for studio in st.session_state.studios_name:
@@ -397,65 +432,7 @@ def main():
     
     # Display content in columns
     with col3:
-        # Create a header row with title and legend
-        header_col1, header_col2 = st.columns([1, 2])
-        with header_col1:
-            st.header("Die Karte")
-        with header_col2:
-            # Create a legend using HTML/CSS
-            legend_html = """
-            <div style="
-                padding: 10px;
-                background-color: white;
-                border-radius: 5px;
-                box-shadow: 0 0 5px rgba(0,0,0,0.2);
-                margin-top: 20px;
-                display: flex;
-                flex-direction: row;
-                gap: 15px;
-                font-size: 14px;
-            ">
-                <div>
-                    <span style="
-                        display: inline-block;
-                        width: 20px;
-                        height: 20px;
-                        border-radius: 50%;
-                        background-color: green;
-                        margin-right: 5px;
-                        vertical-align: middle;
-                    "></span>
-                    <span style="vertical-align: middle;">Fitness Studios</span>
-                </div>
-                <div>
-                    <span style="
-                        display: inline-block;
-                        width: 20px;
-                        height: 20px;
-                        border-radius: 50%;
-                        background-color: red;
-                        margin-right: 5px;
-                        vertical-align: middle;
-                    "></span>
-                    <span style="vertical-align: middle;">Selected Studio</span>
-                </div>
-                <div>
-                    <span style="
-                        display: inline-block;
-                        width: 20px;
-                        height: 20px;
-                        border-radius: 50%;
-                        background-color: blue;
-                        margin-right: 5px;
-                        vertical-align: middle;
-                    "></span>
-                    <span style="vertical-align: middle;">Charging Stations</span>
-                </div>
-            </div>
-            """
-            st.markdown(legend_html, unsafe_allow_html=True)
-            
-        # Display the map
+        st.header("Die Karte")
         st_folium(m, width=None, height=600, use_container_width=True)
     
     if not st.session_state.fitness_centers.empty:
@@ -465,6 +442,12 @@ def main():
         with col2:
             st.header("Die Details:")
             get_show_details_fitness(st.session_state.selected_fitness)
+            
+# Check if UI needs to be refreshed
+if st.session_state.get("refresh_ui", False):
+    st.session_state.refresh_ui = False  # Reset flag
+    st.rerun()  # ✅ Only rerun here, outside of callbacks
+
 
 if __name__ == "__main__":
     main()
