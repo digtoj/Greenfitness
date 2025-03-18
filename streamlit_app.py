@@ -168,7 +168,7 @@ def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
     try:
         # Update session state
         st.session_state.selected_fitness = fitness
-        st.session_state.zoom_start = 3
+        st.session_state.zoom_start = 10
         
         # Ensure latitude/longitude are present and valid
         if "latitude" in fitness and "longitude" in fitness:
@@ -375,7 +375,8 @@ def main():
     st.title(f"📍 {location} - Fitness & Auto-Lade Stationen")
     
     # Create layout
-    col1, col2, col3 = st.columns((1, 1, 2))
+    col1, col3 = st.columns((1, 3))
+
     
     # Create map
     m = create_base_map(st.session_state.map_center, st.session_state.zoom_start)
@@ -462,15 +463,12 @@ def main():
             """
             st.markdown(legend_html, unsafe_allow_html=True)
         
-        st_folium(m, width=None, height=600, use_container_width=True)
+        st_folium(m, width=None, height=700, use_container_width=True)
     
     if not st.session_state.fitness_centers.empty:
         with col1:
             st.header("🏋️‍♂️ Fitnessstudios")
             show_fitness_studios()
-        with col2:
-            st.header("Die Details:")
-            get_show_details_fitness(st.session_state.selected_fitness)
             
 # Check if UI needs to be refreshed
 if st.session_state.get("refresh_ui", False):

@@ -14,7 +14,7 @@ if api_key is None:
 
 # API Open Charge Map
 def get_charging_stations(latitude, longitude, max_results=100, radius_km=10):
-
+    radius_km=100*radius_km
     if api_key is None:
         raise ValueError("The API key is not available.")
 
@@ -24,7 +24,7 @@ def get_charging_stations(latitude, longitude, max_results=100, radius_km=10):
         "verbose": "false",
         "latitude": latitude,  
         "longitude": longitude,
-        "distance": radius_km*10,
+        "distance": radius_km+100,
         "distanceunit": "KM",
         "key": api_key
     }
