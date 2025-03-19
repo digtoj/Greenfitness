@@ -342,7 +342,7 @@ def main():
         
         # Add "Select All" button at the top of the container
         if st.session_state.studios_name:
-            select_all = st.sidebar.button("Alle Fitnessstuidioskette auswählen", on_click=select_all_studios)
+            select_all = st.sidebar.button("Alle Fitnessstudioskette auswählen", on_click=select_all_studios)
         
         with st.sidebar.container(border=True, height=500):
             if st.session_state.studios_name:
@@ -359,7 +359,7 @@ def main():
                 st.text("🧰  Keine Ergebnisse anzuzeigen.")
     
     # Main content
-    st.title("Green & Fitness")
+    st.title("GreenFitness")
     
     # Search bar
     col1, col2 = st.columns([3, 1])
