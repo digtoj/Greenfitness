@@ -168,7 +168,7 @@ def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
     try:
         # Update session state
         st.session_state.selected_fitness = fitness
-        st.session_state.zoom_start = 10
+        st.session_state.zoom_start = 12
         
         # Ensure latitude/longitude are present and valid
         if "latitude" in fitness and "longitude" in fitness:
