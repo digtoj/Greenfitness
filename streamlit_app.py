@@ -469,12 +469,6 @@ def main():
         with col1:
             st.header("🏋️‍♂️ Fitnessstudios")
             show_fitness_studios()
-
-    detail = st.sidebar.columns
-    if not st.session_state.fitness_centers.empty:
-        with detail :
-            st.header("Die Details:")
-            get_show_details_fitness(st.session_state.selected_fitness)
             
 # Check if UI needs to be refreshed
 if st.session_state.get("refresh_ui", False):
