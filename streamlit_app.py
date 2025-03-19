@@ -26,8 +26,8 @@ DEFAULT_COORDINATES = {
     "DE": (51.1657, 10.4515),  # Germany center
     "FR": (46.6034, 1.8883)    # France center
 }
-DEFAULT_ZOOM = 5
-DEFAULT_SEARCH_RADIUS_KM = 10
+DEFAULT_ZOOM = 6
+DEFAULT_SEARCH_RADIUS_KM = 5
 
 all_fitness_centers = get_all_fitness_centers()
 
