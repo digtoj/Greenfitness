@@ -224,28 +224,17 @@ def handle_address_search(address: str, country_code: str) -> None:
         
         st.session_state.location = address
 
-        # Enhance address with country for better geocoding
-        country_names = {"DE": "Germany", "FR": "France"}
-        enhanced_address = address
-        
-        # Add country to address if not already present
-        if country_names[country_code].lower() not in address.lower() and country_code.lower() not in address.lower():
-            enhanced_address = f"{address}, {country_names[country_code]}"
-
-        # Geocode the enhanced address
-        coords = geocode_location(enhanced_address)
+        # Geocode the address
+        coords = geocode_location(address)
         if not coords:
-            # Fallback: try original address
-            coords = geocode_location(address)
-            if not coords:
-                st.error(f"Konnte die Adresse '{address}' in {'Deutschland' if country_code == 'DE' else 'Frankreich'} nicht finden.")
-                return
+            st.error(f"Konnte die Adresse '{address}' nicht finden.")
+            return
         
         # Update map center
         st.session_state.map_center = coords
         
         # Try to extract city name for town boundary
-        extracted_city = extract_city_from_address(enhanced_address)
+        extracted_city = extract_city_from_address(address)
         
         # Get town boundary if we can extract a city
         if extracted_city:
@@ -253,7 +242,7 @@ def handle_address_search(address: str, country_code: str) -> None:
         else:
             st.session_state.town_boundary = None
         
-        # Get fitness centers within reasonable distance (e.g., 50km) for the specific country
+        # Get fitness centers within reasonable distance (e.g., 50km)
         nearby_centers = get_fitness_centers_by_coordinates(coords, country_code, max_distance_km=50)
         
         if not nearby_centers.empty:
@@ -274,13 +263,8 @@ def handle_address_search(address: str, country_code: str) -> None:
                 "max_distance": nearby_centers["distance_km"].max() if "distance_km" in nearby_centers.columns else 0,
                 "closest_distance": nearby_centers["distance_km"].min() if "distance_km" in nearby_centers.columns else 0
             }
-            
-            # Success message with country
-            country_name = "Deutschland" if country_code == "DE" else "Frankreich"
-            st.success(f"✅ Suche in {country_name} erfolgreich!")
         else:
-            country_name = "Deutschland" if country_code == "DE" else "Frankreich"
-            st.warning(f"Keine Fitnessstudios in der Nähe von '{address}' in {country_name} gefunden.")
+            st.warning(f"Keine Fitnessstudios in der Nähe von '{address}' gefunden.")
             st.session_state.fitness_centers = pd.DataFrame()
             st.session_state.studios_name = []
             st.session_state.search_results_info = None
@@ -311,6 +295,7 @@ def show_fitness_studios_in_sidebar():
         
         # Scrollable container for fitness studios
         with st.container(height=400):
+            card_index = 0  # Simple counter for unique keys - THIS IS THE FIX
             for studio in st.session_state.studios_name:
                 # Check if this studio is currently filtered in (checkbox is checked)
                 if studio in st.session_state.studio_filters and st.session_state.studio_filters[studio]:
@@ -320,8 +305,9 @@ def show_fitness_studios_in_sidebar():
                             # Convert DataFrame row to dictionary
                             fitness_dict = fitness_row.to_dict()
                             
-                            # Create compact card for sidebar
-                            show_compact_fitness_card(fitness_dict)
+                            # Create compact card for sidebar - PASS THE INDEX
+                            show_compact_fitness_card(fitness_dict, card_index)
+                            card_index += 1  # INCREMENT FOR UNIQUENESS
                             displayed_studios = True
                     else:
                         st.text(f"🧰 Keine Ergebnisse für {studio}")
@@ -331,7 +317,8 @@ def show_fitness_studios_in_sidebar():
     else:
         st.info("🔍 Führen Sie eine Suche durch, um Ergebnisse zu sehen.")
 
-def show_compact_fitness_card(fitness_data):
+
+def show_compact_fitness_card(fitness_data, card_index):  # ADD card_index PARAMETER
     """Show a compact fitness card suitable for sidebar."""
     if not fitness_data:
         return
@@ -359,14 +346,8 @@ def show_compact_fitness_card(fitness_data):
         if address:
             st.caption(f"📍 {address}")
         
-        # Action button with unique key using coordinates
-        def create_handler(data=fitness_data):
-            return lambda: handle_fitness_selection(data)
-        
-        # Create unique key using name, coordinates, and hash
-        lat = fitness_data.get('latitude', 0)
-        lon = fitness_data.get('longitude', 0)
-        unique_key = f"compact_btn_{hash(f'{name}_{lat}_{lon}_{address}')}"
+        # Action button with simple index-based unique key - NO MORE HASH
+        unique_key = f"fitness_btn_{card_index}"  # SIMPLE SEQUENTIAL KEY
         
         if st.button(
             "🗺️ Auf Karte anzeigen", 
@@ -395,14 +376,8 @@ def main():
     # Sidebar
     st.sidebar.title("🎛️ Filter und Einstellungen")
     
-    # Country selection - restrict to France or Germany only
-    country_code = st.sidebar.radio(
-        "🌍 Land auswählen:",
-        ["DE", "FR"],
-        captions=["Deutschland", "Frankreich"],
-        index=0 if st.session_state.selected_country_code == "DE" else 1,
-    )
-    st.session_state.selected_country_code = country_code
+    # Use default country code from session state
+    country_code = st.session_state.selected_country_code
     
     # Studio filter section
     if not st.session_state.fitness_centers.empty:
@@ -449,36 +424,28 @@ def main():
     st.title("_:blue[GreenFitness]_ - Fitness und E-Ladung")
     
     # Search interface (without subheader for more space)
-    col1, col2, col3 = st.columns([2, 1, 2])  # Smaller search area
+    col1, col2 = st.columns([3, 1])
     
     with col1:
-        # Text input for flexible address search - country-specific
-        country_examples = {
-            "DE": "z.B. Luisental 29F, Berlin oder München",
-            "FR": "z.B. Champs-Élysées 1, Paris oder Lyon"
-        }
-        
+        # Text input for flexible address search
         address_input = st.text_input(
-            f"Adresse in {country_code} eingeben:",
-            placeholder=country_examples[country_code],
+            "Geben Sie eine Adresse oder Stadt ein:",
+            placeholder="z.B. Luisental 29F, Berlin oder einfach Berlin",
             label_visibility="collapsed",
-            help=f"Adresse oder Stadt in {'Deutschland' if country_code == 'DE' else 'Frankreich'} eingeben"
+            help="Sie können eine vollständige Adresse (Straße + Hausnummer + Stadt) oder nur eine Stadt eingeben"
         )
         
         # Optional: Show recent searches as expander
         if st.session_state.search_history:
             with st.expander("📋 Letzte Suchen"):
-                for search in reversed(st.session_state.search_history[-3:]):  # Show only last 3 searches
+                for search in reversed(st.session_state.search_history[-5:]):  # Show last 5 searches
                     if st.button(f"🔄 {search}", key=f"recent_{search}"):
                         address_input = search
                         # Trigger search immediately
                         handle_address_search(search, country_code)
 
     with col2:
-        st.markdown("<br>", unsafe_allow_html=True)  # Add some spacing
-        search_button = st.button("🔍 Suchen", type="primary", use_container_width=True)
-    
-    # col3 is left empty for spacing
+        search_button = st.button("🔍 Suchen", type="primary")
     
     # Handle search
     if search_button and address_input.strip():
@@ -511,7 +478,34 @@ def main():
                     delta=f"{selected_name[:20]}..."
                 )
     
-    # Full-width map section (NEW: No more column layout)
+    # Contextual radius filter - only when studio is selected
+    if st.session_state.selected_fitness:
+        st.markdown("---")
+        radius_col1, radius_col2 = st.columns([2, 1])
+        with radius_col1:
+            st.markdown("**🔌 Ladestationen-Einstellungen**")
+        with radius_col2:
+            new_search_radius = st.slider(
+                "Suchradius (km):", 
+                min_value=1, 
+                max_value=5,
+                value=st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM),
+                help="Entfernung für die Suche nach Ladestationen um das ausgewählte Fitnessstudio",
+                key="contextual_radius_slider"
+            )
+            # Update session state if value changed
+            if new_search_radius != st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM):
+                st.session_state.search_radius_km = new_search_radius
+                # Refresh charging stations if fitness center is selected
+                if st.session_state.selected_fitness and "latitude" in st.session_state.selected_fitness:
+                    fitness = st.session_state.selected_fitness
+                    st.session_state.charging_stations = get_charging_stations(
+                        fitness["latitude"],
+                        fitness["longitude"],
+                        new_search_radius
+                    )
+    
+    # Full-width map section
     st.markdown("---")
     
     # Map header with legend on same line (smaller size)
