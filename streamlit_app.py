@@ -62,63 +62,12 @@ def init_session_state() -> None:
         "town_boundary": None,  # For town boundary visualization
         "search_results_info": None,  # For search results statistics
         "search_radius_km": DEFAULT_SEARCH_RADIUS_KM,  # Initialize radius
-        "debug_mode": False  # Debug mode toggle
     }
     
     for key, default_value in state_defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
 
-
-# Debug function
-def debug_session_state():
-    """Debug function to show current session state"""
-    if st.checkbox("🔧 Debug Mode", key="debug_toggle"):
-        st.session_state.debug_mode = True
-        st.markdown("### 🔍 Debug Information")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Selected Fitness:**")
-            if st.session_state.selected_fitness:
-                selected = st.session_state.selected_fitness
-                st.json({
-                    "name": selected.get("name"),
-                    "latitude": selected.get("latitude"), 
-                    "longitude": selected.get("longitude"),
-                    "has_coords": "latitude" in selected and "longitude" in selected,
-                    "coords_valid": (selected.get("latitude") != 0 and selected.get("longitude") != 0) if "latitude" in selected else False
-                })
-            else:
-                st.write("None")
-        
-        with col2:
-            st.markdown("**Charging Stations:**")
-            stations = st.session_state.get("charging_stations", [])
-            st.write(f"Count: {len(stations)}")
-            if stations:
-                # Show first station as example
-                first_station = stations[0]
-                st.json({
-                    "name": first_station.get("name"),
-                    "latitude": first_station.get("latitude"),
-                    "longitude": first_station.get("longitude"),
-                    "distance": first_station.get("distance")
-                })
-        
-        st.markdown("**Map State:**")
-        st.json({
-            "map_center": st.session_state.map_center,
-            "zoom_start": st.session_state.zoom_start,
-            "search_radius_km": st.session_state.get("search_radius_km", "not set")
-        })
-        
-        # Manual refresh button
-        if st.button("🔄 Force Refresh", help="Click if map doesn't update"):
-            st.rerun()
-    else:
-        st.session_state.debug_mode = False
 
 
 # Geocoding functions
@@ -622,7 +571,7 @@ def show_selected_studio_details():
     
     if fitness_data.get("website"):
         website = fitness_data.get("website")
-        if not website.startswith(('http://', 'https://')):
+        if not website:
             website = f"https://{website}"
         st.markdown(f"🌍 **Website:**  \n[{fitness_data.get('website')}]({website})")
     
@@ -643,16 +592,6 @@ def show_selected_studio_details():
             # Re-center map on selected studio
             st.session_state.map_center = [float(fitness_data["latitude"]), float(fitness_data["longitude"])]
             st.session_state.zoom_start = 15
-            st.rerun()
-    
-    with col2:
-        nano_time2 = time.time_ns() + 1  # Ensure different from first button
-        if st.button("❌ Auswahl aufheben", use_container_width=True, key=f"clear_btn_{nano_time2}"):
-            # Clear selection
-            st.session_state.selected_fitness = None
-            st.session_state.charging_stations = []
-            # Reset map to default view
-            st.session_state.zoom_start = DEFAULT_ZOOM
             st.rerun()
 
 
@@ -675,8 +614,6 @@ def main():
     # Main title
     st.title("_:blue[GreenFitness]_ - Fitness und E-Ladung")
     
-    # Add debug section
-    debug_session_state()
     
     # Sidebar
     # Filters in expandable section (closed by default)
@@ -845,7 +782,7 @@ def main():
         radius = st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM)
         debug_info.append(f"Ladestationen: {charging_count} (Radius: {radius}km)")
         
-        st.caption(f"🔍 Debug: {' | '.join(debug_info)}")
+
     
     # Show warning if no charging stations found
     if (st.session_state.get("selected_fitness") and 
