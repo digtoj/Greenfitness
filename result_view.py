@@ -10,25 +10,24 @@ def clean_data(value, default="N/A"):
     return default if (pd.isna(value) or value in [None, ""]) else str(value)
 
 
-def show_container_veiw(title, description, address, id, action_handler):
+def show_container_view(title, description, address, id, action_handler):
     id = str(time.time_ns() * 1000)
     id = description + "" + id
     container = st.container(border=True, key=id)
     with container:
-        cols = st.columns([2, 1, 1])
+        cols = st.columns([2, 2])
         with cols[0]:
             with st.popover(title):
                 st.markdown(f"**{title}**")
                 st.markdown(description.replace("\n", "  \n"))
         with cols[1]:
-            st.write(address)
-        with cols[2]:
             st.button(
-                "🗺️",
+                "🗺️🔌",
                 key=f"btn_{id}",
                 help="Auf der karte anzeigen",
                 on_click=action_handler,
             )
+            st.caption("Klicken Sie, um Ladestationen in der Nähe zu zeigen :electric_plug:")
 
     return container
 
@@ -49,6 +48,8 @@ def get_show_details_fitness(fitness_data):
     address_parts = [
         clean_data(fitness_data.get("addr:street", "")),
         clean_data(fitness_data.get("addr:housenumber", "")),
+        clean_data(fitness_data.get("addr:postcode", "")),
+        clean_data(fitness_data.get("addr:city", "")),
     ]
     address = " ".join(filter(None, address_parts))
 
@@ -70,6 +71,8 @@ def get_card_view_fitness(fitness_data, action_handler):
     address_parts = [
         clean_data(fitness_data.get("addr:street", "")),
         clean_data(fitness_data.get("addr:housenumber", "")),
+        clean_data(fitness_data.get("addr:postcode", "")),
+        clean_data(fitness_data.get("addr:city", "")),
     ]
     address = " ".join(filter(None, address_parts))
 
@@ -80,10 +83,46 @@ def get_card_view_fitness(fitness_data, action_handler):
         f"🌍 {clean_data(fitness_data.get('website', ''), 'Keine Angabe')}",
     ]
 
-    show_container_veiw(
+    show_container_view(
         title=title,
         description="\n".join(details),
         address=address,
         id=fitness_data.get("id"),
+        action_handler=action_handler,
+    )
+
+
+# NEW: Enhanced card view with distance information
+def get_card_view_fitness_enhanced(fitness_data, action_handler):
+    """Enhanced card view that shows distance information."""
+    if not fitness_data:  # Check if dictionary is empty
+        return st.warning("Keine Daten verfügbar")
+
+    title = clean_data(fitness_data.get("name", ""), "Unbekanntes Studio")
+    
+    # Add distance info if available
+    if "distance_km" in fitness_data and pd.notna(fitness_data["distance_km"]):
+        title += f" ({fitness_data['distance_km']:.1f}km)"
+    
+    address_parts = [
+        clean_data(fitness_data.get("addr:street", "")),
+        clean_data(fitness_data.get("addr:housenumber", "")),
+        clean_data(fitness_data.get("addr:postcode", "")),
+        clean_data(fitness_data.get("addr:city", "")),
+    ]
+    address = " ".join(filter(None, address_parts))
+
+    details = [
+        f"📍 {address}",
+        f"⏰ {clean_data(fitness_data.get('opening_hours', ''), 'Keine Angabe')}",
+        f"📞 {clean_data(fitness_data.get('contact:phone', ''), 'Keine Angabe')}",
+        f"🌍 {clean_data(fitness_data.get('website', ''), 'Keine Angabe')}",
+    ]
+
+    show_container_view(
+        title=title,
+        description="\n".join(details),
+        address=address,
+        id=fitness_data.get("id", str(time.time_ns())),
         action_handler=action_handler,
     )

@@ -7,10 +7,10 @@ from geopy.geocoders import Nominatim
 
 load_dotenv()
 
-api_key = os.getenv("OPEN_ROUTE_API_KEY")
+# api_key = os.getenv("OPEN_ROUTE")
+API_KEY = "5b3ce3597851110001cf6248c929106501184f79bb5406d603aae1ad"
 
-
-client = openrouteservice.Client(key=api_key) 
+client = openrouteservice.Client(key=API_KEY) 
 
 def snap_to_nearest_road(coords):
     try:

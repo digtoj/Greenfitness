@@ -1,5 +1,8 @@
 import streamlit as st
+import json
+import logging
 import folium
+from geopy.distance import geodesic
 from folium.plugins import HeatMap
 import pandas as pd
 from dotenv import load_dotenv
@@ -10,9 +13,9 @@ import logging
 from functools import lru_cache
 
 from fitness_center_data import *
-from openmapapi import get_charging_stations, get_town_boundary
+from openmapapi import * # get_charging_stations, get_town_boundary
 from openroute import *
-from result_view import get_card_view_fitness, get_show_details_fitness
+from result_view import get_card_view_fitness, get_show_details_fitness, get_card_view_fitness_enhanced
 from data import LOGO
 
 # Set up logging
@@ -26,8 +29,8 @@ DEFAULT_COORDINATES = {
     "DE": (51.1657, 10.4515),  # Germany center
     "FR": (46.6034, 1.8883)    # France center
 }
-DEFAULT_ZOOM = 6
-DEFAULT_SEARCH_RADIUS_KM = 5
+DEFAULT_ZOOM = 5
+DEFAULT_SEARCH_RADIUS_KM = 1
 
 all_fitness_centers = get_all_fitness_centers()
 
@@ -54,7 +57,10 @@ def init_session_state() -> None:
         "search_history": [],
         "last_search_params": {},
         "location": None,
-        "studio_filters": {}  # New state to track which studios are checked/unchecked
+        "studio_filters": {},  # New state to track which studios are checked/unchecked
+        "town_boundary": None,  # For town boundary visualization
+        "search_results_info": None,  # For search results statistics
+        "search_radius_km": DEFAULT_SEARCH_RADIUS_KM  # Initialize radius
     }
     
     for key, default_value in state_defaults.items():
@@ -80,7 +86,7 @@ def geocode_location(location: str) -> Optional[Tuple[float, float]]:
         location_data = geolocator.geocode(location)
         
         if location_data:
-            return (location_data.latitude, location_data.longitude)
+            return location_data.latitude, location_data.longitude
         return None
     
     except Exception as e:
@@ -91,31 +97,17 @@ def geocode_location(location: str) -> Optional[Tuple[float, float]]:
 # Map handling functions
 def create_base_map(center: Tuple[float, float], zoom: int) -> folium.Map:
     """
-    Create a base Folium map with an optional heatmap overlay.
-    
-    Args:
-        center: (latitude, longitude) tuple for map center
-        zoom: Initial zoom level
-        
-    Returns:
-        Folium Map object
-    """
+        Create a base Folium map.
+
+        Args:
+            center: (latitude, longitude) tuple for map center
+            zoom: Initial zoom level
+
+        Returns:
+            Folium Map object
+        """
     m = folium.Map(location=center, zoom_start=zoom)
-
-    # Prepare heatmap data
-    heat_data = []
-    if not st.session_state.fitness_centers.empty:
-        for _, row in st.session_state.fitness_centers.iterrows():
-            if "latitude" in row and "longitude" in row:
-                heat_data.append([row["latitude"], row["longitude"], 1])  # 1 is the intensity
-
-    # Add HeatMap layer
-    if heat_data:
-        HeatMap(heat_data, radius=15).add_to(m)
-
     return m
-
-
 
 def add_fitness_markers(m: folium.Map, fitness_centers: List[Dict[str, Any]]) -> None:
     """
@@ -136,26 +128,42 @@ def add_fitness_markers(m: folium.Map, fitness_centers: List[Dict[str, Any]]) ->
             except Exception as e:
                 logger.error(f"Error adding fitness marker: {str(e)}")
 
-
 def add_charging_station_markers(m: folium.Map, stations: List[Dict[str, Any]]) -> None:
     """
-    Add markers for charging stations to the map.
-    
+    Add markers for charging stations within the search radius to the map.
+
     Args:
         m: Folium map object
         stations: List of charging station data dictionaries
     """
-    for station in stations:
-        if "latitude" in station and "longitude" in station:
-            try:
-                folium.Marker(
-                    location=[station["latitude"], station["longitude"]],
-                    popup=f"🔌 {station.get('name', 'Charging Station')}",
-                    icon=folium.Icon(**ICONS["charging_station"]),
-                ).add_to(m)
-            except Exception as e:
-                logger.error(f"Error adding charging station marker: {str(e)}")
+    try:
+        selected = st.session_state.get("selected_fitness")
+        radius_km = st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM)
 
+        if not selected or "latitude" not in selected or "longitude" not in selected:
+            logger.warning("No selected fitness studio with coordinates found.")
+            return
+
+        selected_coords = (selected["latitude"], selected["longitude"])
+
+        for station in stations:
+            if "latitude" in station and "longitude" in station:
+                station_coords = (station["latitude"], station["longitude"])
+                distance = geodesic(selected_coords, station_coords).km
+
+                if distance <= radius_km:
+                    logger.info(f"Distance to station: {distance:.2f} km (limit: {radius_km})")
+                    folium.Marker(
+                        location=station_coords,
+                        tooltip=(
+                            f"🔌Charging Station"
+                            f"<br>📍 {station.get('name', 'Charging Station')} ({distance:.2f} km)"
+                        ),
+                        icon=folium.Icon(**ICONS["charging_station"]),
+                    ).add_to(m)
+
+    except Exception as e:
+        logger.error(f"Error in filtering charging stations by radius: {str(e)}")
 
 # UI Handler functions
 def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
@@ -168,13 +176,13 @@ def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
     try:
         # Update session state
         st.session_state.selected_fitness = fitness
-        st.session_state.zoom_start = 12
+        st.session_state.zoom_start = 16
         
         # Ensure latitude/longitude are present and valid
         if "latitude" in fitness and "longitude" in fitness:
             st.session_state.map_center = [fitness["latitude"], fitness["longitude"]]
             
-            # Fetch nearby charging stations
+            # Fetch nearby charging stations using radius from session state
             radius_km = st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM)
             country_code = st.session_state.get("selected_country_code", DEFAULT_COUNTRY_CODE)
             
@@ -184,28 +192,23 @@ def handle_fitness_selection(fitness: Dict[str, Any]) -> None:
                 radius_km
             )
             
-            # Force a rerun to update the UI
-            # st.experimental_rerun() is outdated
-            # st.rerun() is up to date, but should not be in callback
-            # Set a flag for UI update
-            st.session_state.refresh_ui = True  # Instead of using st.rerun()
     except Exception as e:
         logger.error(f"Error in fitness selection handler: {str(e)}")
         st.error("Es ist ein Fehler bei der Auswahl des Studios aufgetreten.")
 
-
-def handle_search(location: str, country_code: str, fitness_centers) -> None:
+# Enhanced address search handler
+def handle_address_search(address: str, country_code: str) -> None:
     """
-    Handle the search operation.
+    Handle the search operation for both cities and street addresses.
     
     Args:
-        location: Location string to search
+        address: Address string to search (can be city or full address)
         country_code: Country code to filter results
     """
     try:
         # Save search parameters to avoid duplicate searches
         search_params = {
-            "location": location,
+            "address": address,
             "country_code": country_code
         }
         
@@ -214,38 +217,73 @@ def handle_search(location: str, country_code: str, fitness_centers) -> None:
             return
             
         # Update search history
-        if location not in st.session_state.search_history:
-            st.session_state.search_history.append(location)
+        if address not in st.session_state.search_history:
+            st.session_state.search_history.append(address)
             if len(st.session_state.search_history) > 10:
                 st.session_state.search_history.pop(0)
         
-        st.session_state.location = location
+        st.session_state.location = address
 
-        # Geocode the location
-        coords = geocode_location(location)
-        if not coords:
-            st.error(f"Konnte den Ort '{location}' nicht finden.")
-            return
+        # Enhance address with country for better geocoding
+        country_names = {"DE": "Germany", "FR": "France"}
+        enhanced_address = address
         
-        # ✅ Fetch and store the town boundary
-        st.session_state.town_boundary = get_town_boundary(location, country_code)
-            
+        # Add country to address if not already present
+        if country_names[country_code].lower() not in address.lower() and country_code.lower() not in address.lower():
+            enhanced_address = f"{address}, {country_names[country_code]}"
+
+        # Geocode the enhanced address
+        coords = geocode_location(enhanced_address)
+        if not coords:
+            # Fallback: try original address
+            coords = geocode_location(address)
+            if not coords:
+                st.error(f"Konnte die Adresse '{address}' in {'Deutschland' if country_code == 'DE' else 'Frankreich'} nicht finden.")
+                return
+        
         # Update map center
         st.session_state.map_center = coords
         
-        # Get fitness data
-        if not st.session_state.fitness_centers.empty:
+        # Try to extract city name for town boundary
+        extracted_city = extract_city_from_address(enhanced_address)
+        
+        # Get town boundary if we can extract a city
+        if extracted_city:
+            st.session_state.town_boundary = get_town_boundary(extracted_city, country_code)
+        else:
+            st.session_state.town_boundary = None
+        
+        # Get fitness centers within reasonable distance (e.g., 50km) for the specific country
+        nearby_centers = get_fitness_centers_by_coordinates(coords, country_code, max_distance_km=50)
+        
+        if not nearby_centers.empty:
+            # Store the filtered fitness centers
+            st.session_state.fitness_centers = nearby_centers
+            
             # Extract studio names for filtering
-            st.session_state.studios_name = get_name_studio(st.session_state.fitness_centers, location)
+            st.session_state.studios_name = get_studio_names_from_centers(nearby_centers)
             
             # Initialize all studios as checked by default in the filters
             for studio in st.session_state.studios_name:
                 if studio not in st.session_state.studio_filters:
                     st.session_state.studio_filters[studio] = True
             
+            # Show search results info
+            st.session_state.search_results_info = {
+                "total_centers": len(nearby_centers),
+                "max_distance": nearby_centers["distance_km"].max() if "distance_km" in nearby_centers.columns else 0,
+                "closest_distance": nearby_centers["distance_km"].min() if "distance_km" in nearby_centers.columns else 0
+            }
+            
+            # Success message with country
+            country_name = "Deutschland" if country_code == "DE" else "Frankreich"
+            st.success(f"✅ Suche in {country_name} erfolgreich!")
         else:
-            st.warning(f"Keine Fitnessstudios in '{location}' gefunden.")
-            st.session_state.fitness_centers = [] 
+            country_name = "Deutschland" if country_code == "DE" else "Frankreich"
+            st.warning(f"Keine Fitnessstudios in der Nähe von '{address}' in {country_name} gefunden.")
+            st.session_state.fitness_centers = pd.DataFrame()
+            st.session_state.studios_name = []
+            st.session_state.search_results_info = None
         
         # Reset selections
         st.session_state.selected_fitness = None
@@ -259,34 +297,84 @@ def handle_search(location: str, country_code: str, fitness_centers) -> None:
         logger.error(f"Search error: {str(e)}")
         st.error(f"Fehler bei der Suche: {str(e)}")
 
-def show_fitness_studios():
-    with st.container(border=True, height=600):
-        if st.session_state.studios_name:
-            displayed_studios = False
+# Enhanced fitness studios display for sidebar
+def show_fitness_studios_in_sidebar():
+    """Enhanced version for sidebar display with compact design."""
+    if st.session_state.studios_name and not st.session_state.fitness_centers.empty:
+        displayed_studios = False
+        
+        # Show search info if available
+        if hasattr(st.session_state, 'search_results_info') and st.session_state.search_results_info:
+            info = st.session_state.search_results_info
+            st.success(f"📍 {info['total_centers']} Studios gefunden "
+                      f"({info['closest_distance']:.1f}-{info['max_distance']:.1f}km)")
+        
+        # Scrollable container for fitness studios
+        with st.container(height=400):
             for studio in st.session_state.studios_name:
                 # Check if this studio is currently filtered in (checkbox is checked)
                 if studio in st.session_state.studio_filters and st.session_state.studio_filters[studio]:
-                    fitness_centers = get_fitness_centers_by_name(studio, st.session_state.location)
+                    fitness_centers = get_fitness_centers_by_name_from_df(studio, st.session_state.fitness_centers)
                     if not fitness_centers.empty:
                         for _, fitness_row in fitness_centers.iterrows():
                             # Convert DataFrame row to dictionary
                             fitness_dict = fitness_row.to_dict()
-                            # Create a closure to capture the current fitness center
-                            def create_handler(data=fitness_dict):
-                                return lambda: handle_fitness_selection(data)
                             
-                            get_card_view_fitness(
-                                fitness_data=fitness_dict,
-                                action_handler=create_handler()
-                            )
+                            # Create compact card for sidebar
+                            show_compact_fitness_card(fitness_dict)
                             displayed_studios = True
                     else:
-                        st.text(f"🧰  Keine Ergebnisse für {studio} anzuzeigen.")
-            
-            if not displayed_studios:
-                st.text("🧰  Keine Studios ausgewählt. Bitte wählen Sie mindestens ein Studio aus der Seitenleiste.")
-        else:
-            st.text("🧰  Keine Ergebnisse anzuzeigen.")     
+                        st.text(f"🧰 Keine Ergebnisse für {studio}")
+        
+        if not displayed_studios:
+            st.info("🧰 Wählen Sie mindestens ein Studio aus.")
+    else:
+        st.info("🔍 Führen Sie eine Suche durch, um Ergebnisse zu sehen.")
+
+def show_compact_fitness_card(fitness_data):
+    """Show a compact fitness card suitable for sidebar."""
+    if not fitness_data:
+        return
+
+    # Get basic info
+    name = fitness_data.get("name", "Unbekanntes Studio")
+    distance_text = ""
+    if "distance_km" in fitness_data and pd.notna(fitness_data["distance_km"]):
+        distance_text = f" ({fitness_data['distance_km']:.1f}km)"
+    
+    # Address parts
+    address_parts = [
+        fitness_data.get("addr:street", ""),
+        fitness_data.get("addr:housenumber", ""),
+        fitness_data.get("addr:city", "")
+    ]
+    address = " ".join(filter(None, address_parts))
+    
+    # Create compact container
+    with st.container(border=True):
+        # Title with distance
+        st.markdown(f"**🏋️‍♂️ {name}{distance_text}**")
+        
+        # Address
+        if address:
+            st.caption(f"📍 {address}")
+        
+        # Action button with unique key using coordinates
+        def create_handler(data=fitness_data):
+            return lambda: handle_fitness_selection(data)
+        
+        # Create unique key using name, coordinates, and hash
+        lat = fitness_data.get('latitude', 0)
+        lon = fitness_data.get('longitude', 0)
+        unique_key = f"compact_btn_{hash(f'{name}_{lat}_{lon}_{address}')}"
+        
+        if st.button(
+            "🗺️ Auf Karte anzeigen", 
+            key=unique_key,
+            help="Studio auswählen und Ladestationen anzeigen",
+            use_container_width=True
+        ):
+            handle_fitness_selection(fitness_data)
 
 # Main application
 def main():
@@ -305,81 +393,167 @@ def main():
         logger.warning("styles.css not found")
     
     # Sidebar
-    st.sidebar.title("Filter und Einstellungen")
+    st.sidebar.title("🎛️ Filter und Einstellungen")
     
-    # Country selection
+    # Country selection - restrict to France or Germany only
     country_code = st.sidebar.radio(
-        "Land der Suche auswählen:",
+        "🌍 Land auswählen:",
         ["DE", "FR"],
         captions=["Deutschland", "Frankreich"],
         index=0 if st.session_state.selected_country_code == "DE" else 1,
     )
     st.session_state.selected_country_code = country_code
     
-    # Search radius slider
-    search_radius_km = st.sidebar.slider(
-        "🔄 Entfernung (km):", 
-        min_value=1, 
-        max_value=50, 
-        value=st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM)
-    )
-    st.session_state.search_radius_km = search_radius_km
-    
-    # Filter options
-    if st.session_state.fitness_centers.empty:
-        st.error("The are no saved data for the fitness Studio.")
-    else:
-        st.sidebar.header("🏋️‍♂️Ausgwähle Fitnessstudiokette")
+    # Studio filter section
+    if not st.session_state.fitness_centers.empty:
+        st.sidebar.markdown("---")
         
-        # Function to select all studios
-        def select_all_studios():
-            for studio in st.session_state.studios_name:
-                st.session_state.studio_filters[studio] = True
-                # Update the individual checkbox state variables
-                st.session_state[f"studio_{studio}"] = True
-            # Force a rerun to update the UI
-            st.rerun()
-        
-        # Add "Select All" button at the top of the container
-        if st.session_state.studios_name:
-            select_all = st.sidebar.button("Alle Fitnessstudioskette auswählen", on_click=select_all_studios)
-        
-        with st.sidebar.container(border=True, height=500):
-            if st.session_state.studios_name:
-                # Store the checkbox states in session_state.studio_filters
-                for studio in st.session_state.studios_name:
-                    checkbox_value = st.checkbox(
-                        studio, 
-                        key=f"studio_{studio}", 
-                        value=st.session_state.studio_filters.get(studio, True)
-                    )
-                    # Update the filter state
-                    st.session_state.studio_filters[studio] = checkbox_value
-            else:
-                st.text("🧰  Keine Ergebnisse anzuzeigen.")
-    
-    # Main content
-    st.title("GreenFitness")
-    
-    # Search bar
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        location = st.text_input("Geben Sie ein Stadt ein:")
-    with col2:
-        search_button = st.button("Suchen")
-    
-    if search_button:
-        handle_search(location, country_code, st.session_state.fitness_centers)
-    
-    # Display search results
-    st.title(f"📍 {location} - Fitness & Auto-Lade Stationen")
-    
-    # Create layout
-    col1, col3 = st.columns((1, 3))
+        # Initialize selection state
+        all_selected = all(
+            st.session_state.studio_filters.get(studio, False) for studio in st.session_state.studios_name)
 
+        # Function to toggle selection
+        def toggle_all_studios():
+            new_state = not all_selected  # Toggle
+            for studio in st.session_state.studios_name:
+                st.session_state.studio_filters[studio] = new_state
+                st.session_state[f"studio_{studio}"] = new_state
+
+        # Sidebar dropdown menu (expander) for studios
+        with st.sidebar.expander("🏋️‍♂️ Ausgewählte Fitnessstudiokette", expanded=True):
+            # Small toggle button
+            toggle_label = "✅ Alle auswählen" if not all_selected else "🚫 Alle abwählen"
+            st.button(toggle_label, on_click=toggle_all_studios, use_container_width=True)
+
+            # Scrollable checkbox list inside the expander
+            with st.container(height=200):
+                if st.session_state.studios_name:
+                    for studio in st.session_state.studios_name:
+                        checkbox_value = st.checkbox(
+                            studio,
+                            key=f"studio_{studio}",
+                            value=st.session_state.studio_filters.get(studio, True),
+                        )
+                        st.session_state.studio_filters[studio] = checkbox_value
+                else:
+                    st.text("🧰 Keine Studios verfügbar")
+        
+        # Results section in sidebar - NEW: Enhanced section
+        st.sidebar.markdown("---")
+        with st.sidebar.expander("🎯 Ergebnisse", expanded=True):
+            show_fitness_studios_in_sidebar()
+    else:
+        st.sidebar.info("🔍 Führen Sie eine Suche durch, um Fitnessstudios zu finden.")
+
+    # Main content
+    st.title("_:blue[GreenFitness]_ - Fitness und E-Ladung")
     
+    # Search interface (without subheader for more space)
+    col1, col2, col3 = st.columns([2, 1, 2])  # Smaller search area
+    
+    with col1:
+        # Text input for flexible address search - country-specific
+        country_examples = {
+            "DE": "z.B. Luisental 29F, Berlin oder München",
+            "FR": "z.B. Champs-Élysées 1, Paris oder Lyon"
+        }
+        
+        address_input = st.text_input(
+            f"Adresse in {country_code} eingeben:",
+            placeholder=country_examples[country_code],
+            label_visibility="collapsed",
+            help=f"Adresse oder Stadt in {'Deutschland' if country_code == 'DE' else 'Frankreich'} eingeben"
+        )
+        
+        # Optional: Show recent searches as expander
+        if st.session_state.search_history:
+            with st.expander("📋 Letzte Suchen"):
+                for search in reversed(st.session_state.search_history[-3:]):  # Show only last 3 searches
+                    if st.button(f"🔄 {search}", key=f"recent_{search}"):
+                        address_input = search
+                        # Trigger search immediately
+                        handle_address_search(search, country_code)
+
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Add some spacing
+        search_button = st.button("🔍 Suchen", type="primary", use_container_width=True)
+    
+    # col3 is left empty for spacing
+    
+    # Handle search
+    if search_button and address_input.strip():
+        handle_address_search(address_input.strip(), country_code)
+    elif search_button and not address_input.strip():
+        st.warning("Bitte geben Sie eine Adresse oder Stadt ein.")
+
+    # Display current search location and statistics
+    if st.session_state.location:
+        # Show search info
+        info_col1, info_col2, info_col3 = st.columns([2, 1, 1])
+        with info_col1:
+            st.title(f"📍 {st.session_state.location}")
+        
+        with info_col2:
+            if hasattr(st.session_state, 'search_results_info') and st.session_state.search_results_info:
+                info = st.session_state.search_results_info
+                st.metric(
+                    label="Gefundene Studios", 
+                    value=info['total_centers'],
+                    delta=f"Nächstes: {info['closest_distance']:.1f}km"
+                )
+        
+        with info_col3:
+            if st.session_state.selected_fitness:
+                selected_name = st.session_state.selected_fitness.get("name", "Studio")
+                st.metric(
+                    label="Ausgewähltes Studio",
+                    value="✅ Aktiv",
+                    delta=f"{selected_name[:20]}..."
+                )
+    
+    # Full-width map section (NEW: No more column layout)
+    st.markdown("---")
+    
+    # Map header with legend on same line (smaller size)
+    st.markdown("**🗺️ Karte | Legende:** 🟣 Suchort | 🟢 Fitnessstudio | 🔴 Ausgewählt | 🔵 Ladestation")
+
     # Create map
-    m = create_base_map(st.session_state.map_center, st.session_state.zoom_start)
+    if st.session_state.get("selected_fitness"):
+        selected = st.session_state.selected_fitness
+        m = create_base_map(
+            center=(selected["latitude"], selected["longitude"]),
+            zoom=14
+        )
+    else:
+        m = create_base_map(st.session_state.map_center, st.session_state.zoom_start)
+
+    # Add country boundary visualization
+    country_name_map = {"DE": "Germany", "FR": "France"}
+    country_name = country_name_map[country_code]
+    country_boundary = get_country_boundary(country_code)
+
+    if country_boundary:
+        # Add country boundary
+        folium.GeoJson(
+            country_boundary,
+            name="Country Boundary",
+            style_function=lambda feature: {
+                "fillColor": "#A0C8F0",
+                "color": "#0050A0",
+                "weight": 2,
+                "fillOpacity": 0.2,
+            }
+        ).add_to(m)
+
+        # Fit to bounds if available and no specific search location
+        try:
+            if not st.session_state.get("selected_fitness") and not st.session_state.location:
+                bounds = folium.GeoJson(country_boundary).get_bounds()
+                m.fit_bounds(bounds)
+        except Exception as e:
+            logger.warning(f"Could not fit to bounds: {e}")
+    else:
+        st.warning(f"⚠️ Grenze für {country_name} konnte nicht geladen werden.")
     
     # Add town boundary if available
     if st.session_state.get("town_boundary"):
@@ -387,27 +561,41 @@ def main():
             st.session_state.town_boundary,
             name="Selected Town",
             style_function=lambda feature: {
-                "fillColor": "blue",
-                "color": "blue",
+                "fillColor": "orange",
+                "color": "orange",
                 "weight": 2,
-                "fillOpacity": 0.2,
+                "fillOpacity": 0.1,
             },
         ).add_to(m)
     
+    # Add search location marker
+    if st.session_state.location and st.session_state.map_center:
+        folium.Marker(
+            location=st.session_state.map_center,
+            tooltip=f"🔍 Suchstandort: {st.session_state.location}",
+            icon=folium.Icon(color="purple", icon="search"),
+        ).add_to(m)
+    
     # Add filtered fitness markers to the map
-    if st.session_state.studios_name and st.session_state.location:
+    if st.session_state.studios_name and not st.session_state.fitness_centers.empty:
         for studio in st.session_state.studios_name:
             # Only add markers for checked studios
             if st.session_state.studio_filters.get(studio, True):
-                fitness_centers = get_fitness_centers_by_name(studio, st.session_state.location)
+                fitness_centers = get_fitness_centers_by_name_from_df(studio, st.session_state.fitness_centers)
                 if not fitness_centers.empty:
                     for _, fitness_row in fitness_centers.iterrows():
                         fitness_dict = fitness_row.to_dict()
                         if "latitude" in fitness_dict and "longitude" in fitness_dict:
                             try:
+                                distance_text = ""
+                                if "distance_km" in fitness_dict and pd.notna(fitness_dict["distance_km"]):
+                                    distance_text = f" ({fitness_dict['distance_km']:.1f}km)"
+                                
                                 folium.Marker(
                                     location=[fitness_dict["latitude"], fitness_dict["longitude"]],
-                                    popup=fitness_dict.get("name", "Fitness Center"),
+                                    tooltip=(f"🏋️‍♂️ {fitness_dict.get('name', 'Fitness Center')}{distance_text}"
+                                             f"<br>📍 {fitness_dict.get('addr:street', '')} {fitness_dict.get('addr:housenumber', '')}"
+                                             ),
                                     icon=folium.Icon(**ICONS["fitness"]),
                                 ).add_to(m)
                             except Exception as e:
@@ -415,66 +603,47 @@ def main():
     
     # Add selected fitness and charging stations if applicable
     if st.session_state.selected_fitness:
-        # Get first matching row as a dictionary
         selected = st.session_state.selected_fitness
         
         if "latitude" in selected and "longitude" in selected:
+            # Get search radius from session state
+            current_search_radius = st.session_state.get("search_radius_km", DEFAULT_SEARCH_RADIUS_KM)
+            
             # Add special marker for selected fitness
+            distance_text = ""
+            if "distance_km" in selected and pd.notna(selected["distance_km"]):
+                distance_text = f" ({selected['distance_km']:.1f}km)"
+            
             folium.Marker(
                 location=[selected["latitude"], selected["longitude"]],
-                popup=f"⭐ {selected.get('name', 'Selected Fitness')}",
+                tooltip=(f"⭐🏋️‍♂️ {selected.get('name', 'Selected Fitness')}{distance_text}"
+                         f"<br>📍 {selected.get('addr:street', '')} {selected.get('addr:housenumber', '')}"
+                         ),
                 icon=folium.Icon(**ICONS["selected_fitness"]),
             ).add_to(m)
-            
+
+            # Draw a radius around the selected fitness studio
+            folium.Circle(
+                location=[selected["latitude"], selected["longitude"]],
+                radius=current_search_radius * 1000,  # Convert km to meters
+                color=None,
+                fill=True,
+                fill_color="blue",
+                fill_opacity=0.3,
+                tooltip=f"Suchradius: {current_search_radius} km"
+            ).add_to(m)
+
             # Add charging station markers
             add_charging_station_markers(m, st.session_state.charging_stations)
-    
-    # Display content in columns
-    with col3:
-        # Create a header and legend on the same line
-        col3_1, col3_2 = st.columns([1, 3])
-        with col3_1:
-            st.header("Die Karte")
-        with col3_2:
-            # Add a legend to explain the map markers (inline style)
-            legend_html = """
-            <div style="background-color: white; padding: 5px; border-radius: 5px; margin-top: 10px;">
-                <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 15px;">
-                    <div style="display: flex; align-items: center;">
-                        <div style="background-color: green; color: white; border-radius: 50%; width: 20px; height: 20px; text-align: center; margin-right: 5px; display: flex; justify-content: center; align-items: center;">
-                            <i class="fa fa-dumbbell"></i>
-                        </div>
-                        <span>Fitnessstudio</span>
-                    </div>
-                    <div style="display: flex; align-items: center;">
-                        <div style="background-color: red; color: white; border-radius: 50%; width: 20px; height: 20px; text-align: center; margin-right: 5px; display: flex; justify-content: center; align-items: center;">
-                            <i class="fa fa-star"></i>
-                        </div>
-                        <span>Ausgewähltes Fitnessstudio</span>
-                    </div>
-                    <div style="display: flex; align-items: center;">
-                        <div style="background-color: blue; color: white; border-radius: 50%; width: 20px; height: 20px; text-align: center; margin-right: 5px; display: flex; justify-content: center; align-items: center;">
-                            <i class="fa fa-plug"></i>
-                        </div>
-                        <span>Ladestation</span>
-                    </div>
-                </div>
-            </div>
-            """
-            st.markdown(legend_html, unsafe_allow_html=True)
-        
-        st_folium(m, width=None, height=700, use_container_width=True)
-    
-    if not st.session_state.fitness_centers.empty:
-        with col1:
-            st.header("🏋️‍♂️ Fitnessstudios")
-            show_fitness_studios()
-            
+
+    # Render the full-width map (NEW: No column constraints)
+    st_folium(m, width=None, height=700, use_container_width=True)
+
+
 # Check if UI needs to be refreshed
 if st.session_state.get("refresh_ui", False):
     st.session_state.refresh_ui = False  # Reset flag
     st.rerun()  # ✅ Only rerun here, outside of callbacks
-
 
 if __name__ == "__main__":
     main()

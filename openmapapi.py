@@ -1,8 +1,13 @@
 import requests
 from dotenv import load_dotenv
 import os
-import time
-from time import sleep
+import json
+import streamlit as st
+from typing import Any
+from pathlib import Path
+from shapely.geometry import shape
+from shapely.geometry import Point
+from unidecode import unidecode
 
 load_dotenv()
 
@@ -13,8 +18,9 @@ if api_key is None:
     raise ValueError("⚠️ API key is missing! Please check your .env file.")
 
 # API Open Charge Map
-def get_charging_stations(latitude, longitude, max_results=100, radius_km=10):
-    radius_km=100*radius_km
+@st.cache_data(show_spinner=False)
+def get_charging_stations(latitude, longitude, max_results=30, radius_km=1):
+
     if api_key is None:
         raise ValueError("The API key is not available.")
 
@@ -24,7 +30,7 @@ def get_charging_stations(latitude, longitude, max_results=100, radius_km=10):
         "verbose": "false",
         "latitude": latitude,  
         "longitude": longitude,
-        "distance": radius_km+100,
+        "distance": radius_km,  #*10,
         "distanceunit": "KM",
         "key": api_key
     }
@@ -50,50 +56,52 @@ def get_charging_stations(latitude, longitude, max_results=100, radius_km=10):
     else:
         print(f"Error {response.status_code}: Unable to retrieve data.")
         return []
-    
-    
-def get_town_boundary(town_name, country_code="DE"):
+
+def get_town_boundary(town_name: str, country_code: str, level=2) -> Any | None:
     """
-    Fetches the boundary (polygon) of a town using the OpenStreetMap API.
-    
+    Find and return the boundary for a town from local GADM GeoJSON data.
+
     Args:
-        town_name (str): Name of the town.
-        country_code (str): Country code (default: "DE" for Germany).
-    
+        town_name: Name of the town to look for
+        country_code: 'DE' or 'FR'
+        level: 1 or 2 (Level of granularity)
+
     Returns:
-        dict: GeoJSON object of the boundary or None if not found. 
+        GeoJSON feature dict or None
     """
-    try:
-        # Nominatim API URL for searching town boundaries
-        nominatim_url = f"https://nominatim.openstreetmap.org/search"
-        
-        # Adding a User-Agent header to prevent blocking
-        headers = {
-            "User-Agent": "GreenFitnessApp/1.0 (olivianguimdo@gmail.com)"
-        }
+    filename = f"{country_code}_level2.json"
+    path = Path("data/boundaries") / filename  # Change this if your path differs
 
-        params = {
-            "q": f"{town_name}, {country_code}",
-            "format": "json",
-            "polygon_geojson": 1,  # Request boundary polygon
-            "limit": 1
-        }
-        
-        # Add a delay to avoid hitting rate limits
-        time.sleep(1)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found.")
 
-        response = requests.get(nominatim_url, params=params, headers=headers, timeout=10)
+    with open(path, "r", encoding="utf-8") as f:
+        geojson = json.load(f)
 
-        if response.status_code == 200:
-            data = response.json()
-            if data and "geojson" in data[0]:
-                return data[0]["geojson"]  # Return the boundary GeoJSON
-            else:
-                print(f"No boundary found for {town_name}.")
-                return None
-        else:
-            print(f"Error {response.status_code}: Could not fetch boundary.")
-            return None
-    except Exception as e:
-        print(f"Error fetching town boundary: {e}")
-        return None
+    # Try to find matching town in features
+    for feature in geojson["features"]:
+        props = feature["properties"]
+        for key in ["NAME_2", "NAME_1", "NAME_0"]:
+            name = props.get(key)
+            if name and unidecode(town_name.lower()) in unidecode(name.lower()):
+                return feature
+
+    return None
+
+
+def get_country_boundary(country_code, level=0):
+    """Load the local GeoJSON file for a country and level."""
+    base_path = "data/boundaries"
+    file_map = {
+        "DE": "DE_level0.json",
+        "FR": "FR_level0.json"
+    }
+
+    filename = file_map.get(country_code)
+    if not filename:
+        raise ValueError(f"No GeoJSON file configured for country {country_code} at level {level}")
+
+    filepath = f"{base_path}/{filename}"
+    with open(filepath, "r", encoding="utf-8") as f:
+        geojson_data = json.load(f)
+    return geojson_data
