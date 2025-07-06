@@ -73,18 +73,12 @@ def init_session_state() -> None:
 # Geocoding functions
 @lru_cache(maxsize=32)
 def geocode_location(location: str) -> Optional[Tuple[float, float]]:
-    """
-    Geocode a location string to latitude/longitude coordinates.
-    Results are cached to reduce API calls.
-    
-    Args:
-        location: Location string to geocode
-        
-    Returns:
-        Tuple of (latitude, longitude) or None if geocoding failed
-    """
+    """Geocode with better timeout handling."""
     try:
-        geolocator = Nominatim(user_agent="green_fitness_app")
+        geolocator = Nominatim(
+            user_agent="GreenFitnessApp/1.0", 
+            timeout=15  # Increased from 1 to 15 seconds
+        )
         location_data = geolocator.geocode(location)
         
         if location_data:
@@ -93,6 +87,21 @@ def geocode_location(location: str) -> Optional[Tuple[float, float]]:
     
     except Exception as e:
         logger.error(f"Geocoding error: {str(e)}")
+        # Fallback coordinates for major cities
+        fallback_coords = {
+            'hamburg': (53.5511, 9.9937),
+            'berlin': (52.5200, 13.4050),
+            'münchen': (48.1351, 11.5820),
+            'munich': (48.1351, 11.5820),
+            'köln': (50.9375, 6.9603),
+            'frankfurt': (50.1109, 8.6821)
+        }
+        
+        location_lower = location.lower().strip()
+        if location_lower in fallback_coords:
+            logger.info(f"Using fallback coordinates for {location}")
+            return fallback_coords[location_lower]
+        
         return None
 
 
